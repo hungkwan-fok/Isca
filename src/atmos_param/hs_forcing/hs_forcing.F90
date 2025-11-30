@@ -106,6 +106,8 @@ private
    real :: ml_depth=1               ! depth for heat capacity calculation
    real :: spinup_time=10800.     ! number of days to spin up heat capacity for - req. multiple of orbital_period
 
+   ! Polvani-Kushner forcing (hfok edits 2025)
+   real :: pk_deltaT = 30., pk_sigma0 = 0.1, pk_lat_pow = 4., pk_sigma_pow = 2.
 
 !-----------------------------------------------------------------------
 
@@ -119,7 +121,8 @@ private
                               u_wind_file, v_wind_file, equilibrium_t_option,&
                               equilibrium_t_file, p_trop, alpha, peri_time, smaxis, albedo, &
                               lapse, h_a, tau_s, orbital_period,         &
-                              heat_capacity, ml_depth, spinup_time, stratosphere_t_option, P00
+                              heat_capacity, ml_depth, spinup_time, stratosphere_t_option, P00, & 
+                              pk_deltaT, pk_sigma0, pk_lat_pow, pk_sigma_pow ! Polvani-Kushner forcing (hfok edit Dec 2025)
 
 !-----------------------------------------------------------------------
 
@@ -581,6 +584,16 @@ real, intent(in),  dimension(:,:,:), optional :: mask
          p_norm(:,:) = p_full(:,:,k)/p_trop
          teq(:,:,k) = t_star(:,:)*cos_lat(:,:)*(p_norm(:,:))**alpha
          teq(:,:,k) = max( teq(:,:,k), t_strat )
+      else if (trim(equilibrium_t_option) == 'Held_Suarez_PK09') then ! Polvani-Kushner forcing (hfok edit Dec 2025)
+         p_norm(:,:) = p_full(:,:,k)/pref
+         sigma(:,:)  = p_norm(:,:)
+         the   (:,:) = t_star(:,:) - delv*cos_lat_2(:,:)*log(p_norm(:,:))
+         teq(:,:,k)  = the(:,:)*(p_norm(:,:))**KAPPA
+         teq(:,:,k)  = max(teq(:,:,k), tstr(:,:))   ! HS floor
+         where (sigma(:,:) <= pk_sigma0)
+            teq(:,:,k) = teq(:,:,k) - pk_deltaT * sin_lat_2(:,:)**(pk_lat_pow/2.) &
+                                       * exp(- (sigma(:,:)/pk_sigma0)**pk_sigma_pow)
+         end where
       else
          call error_mesg ('hs_forcing_nml', &
          '"'//trim(equilibrium_t_option)//'"  is not a valid value for equilibrium_t_option',FATAL)
