@@ -1,8 +1,5 @@
-# Run a parameter sweep of the Held Suarez model
-# by varying the rotation rate from 1% to 1000% of Earth's rot rate
 import numpy as np
-from isca import Experiment, DryCodeBase, FailedRunError, GFDL_BASE, DiagTable, Namelist
-
+from isca import Experiment, DryCodeBase, GFDL_BASE, DiagTable, Namelist
 from isca.util import exp_progress
 
 NCORES = 32
@@ -52,14 +49,14 @@ namelist = Namelist({
         'surf_res': 0.5
     },
 
-    # configure the relaxation profile
+    # configure the relaxation profile (PK setup built on HS troposphere)
     'hs_forcing_nml': {
-        'equilibrium_t_option': 'Held_Suarez_PK09',
-        'pk_deltaT': 30.,      # K cooling amplitude
-        'pk_sigma0': 0.1,      # transition sigma
-        'pk_lat_pow': 4.,      # lat sharpness
-        'pk_sigma_pow': 2.,    # vertical sharpness
-
+        'equilibrium_t_option': 'Polvani_Kushner',
+        'p_trop': 1.0e4,                  # 100 hPa tropopause
+        'pk_gamma': 4.0e-3,               # 4 K/km in K/m
+        'pk_theta0': np.deg2rad(50.),     # transition latitude
+        'pk_dtheta': np.deg2rad(10.),     # transition width
+        'pk_hfac': 1.0,                   # +1 NH winter, -1 SH winter
         't_zero': 315.,
         't_strat': 200.,
         'delh': 60.,
@@ -67,7 +64,7 @@ namelist = Namelist({
         'eps': 0.,
         'sigma_b': 0.7,
         'ka':   -40.,
-        'ks':   -4.,          # lengthen stratospheric damping vs default -4
+        'ks':   -4.,
         'kf':   -1.,
         'do_conserve_energy': True,
     },
@@ -91,11 +88,7 @@ namelist = Namelist({
 if __name__ == "__main__":
     earth_omega = 7.292e-5
 
-    # Compile the codebase once
-    cb = DryCodeBase.from_directory(GFDL_BASE)
-    cb.compile()
-
-    exp_name = 'PK_testcase'
+    exp_name = 'polvani_kushner_default'
     omega = earth_omega 
 
     exp = Experiment(exp_name, codebase=cb)
@@ -112,9 +105,8 @@ if __name__ == "__main__":
 
     # Months 2–10
     for n in range(2, 13):
-        with exp_progress(exp, description=f"o{s:.0f} d{{day}}"):
+        with exp_progress(exp, description=f"month {n}"):
             exp.run(n, num_cores=NCORES) # use the restart i-1 by default
             exp.delete_restart(n - 1)  # keep space usage sane
-
 
 

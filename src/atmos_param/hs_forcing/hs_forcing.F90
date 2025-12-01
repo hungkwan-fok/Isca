@@ -107,7 +107,15 @@ private
    real :: spinup_time=10800.     ! number of days to spin up heat capacity for - req. multiple of orbital_period
 
    ! Polvani-Kushner forcing (hfok edits 2025)
-   real :: pk_deltaT = 30., pk_sigma0 = 0.1, pk_lat_pow = 4., pk_sigma_pow = 2.
+   real :: pk_gamma = 4.0e-3         ! lapse exponent for winter branch; (default 4.0 K/km)
+   real :: pk_theta0 = 50.*deg2rad  ! transition latitude (default 50 deg)
+   real :: pk_dtheta = 10.*deg2rad  ! transition width (default 10 deg)
+   real :: pk_hfac = 1.0            ! +1: NH winter, -1: SH winter
+
+   real :: W(size(t,1),size(t,2))
+   real :: T_summer(size(t,1),size(t,2)), T_winter(size(t,1),size(t,2))
+
+
 
 !-----------------------------------------------------------------------
 
@@ -122,7 +130,7 @@ private
                               equilibrium_t_file, p_trop, alpha, peri_time, smaxis, albedo, &
                               lapse, h_a, tau_s, orbital_period,         &
                               heat_capacity, ml_depth, spinup_time, stratosphere_t_option, P00, & 
-                              pk_deltaT, pk_sigma0, pk_lat_pow, pk_sigma_pow ! Polvani-Kushner forcing (hfok edit Dec 2025)
+                              pk_gamma, pk_theta0, pk_dtheta, pk_hfac ! Polvani-Kushner forcing (hfok edit Dec 2025)
 
 !-----------------------------------------------------------------------
 
@@ -536,6 +544,10 @@ real, intent(in),  dimension(:,:,:), optional :: mask
        integer :: k, i, j
        real    :: tcoeff, pref
 
+       ! hfok edit Dec 2025 PK forcing
+         real :: W(size(t,1),size(t,2))
+         real :: T_summer(size(t,1),size(t,2)), T_winter(size(t,1),size(t,2))
+
 !-----------------------------------------------------------------------
 !------------latitudinal constants--------------------------------------
 
@@ -548,6 +560,8 @@ real, intent(in),  dimension(:,:,:), optional :: mask
       t_star(:,:) = t_zero - delh*sin_lat_2(:,:) - eps*sin_lat(:,:)
       tstr  (:,:) = t_strat - eps*sin_lat(:,:)
 
+      ! Transition function W(lat)
+      W = 0.5*(1.0 + sign(1.0, pk_hfac)*tanh((lat - pk_theta0)/pk_dtheta)) ! hfok edit Dec 2025 
 !-----------------------------------------------------------------------
       if(trim(equilibrium_t_option) == 'from_file') then
          call get_zonal_mean_temp(Time, p_half, tz)
@@ -584,15 +598,21 @@ real, intent(in),  dimension(:,:,:), optional :: mask
          p_norm(:,:) = p_full(:,:,k)/p_trop
          teq(:,:,k) = t_star(:,:)*cos_lat(:,:)*(p_norm(:,:))**alpha
          teq(:,:,k) = max( teq(:,:,k), t_strat )
-      else if (trim(equilibrium_t_option) == 'Held_Suarez_PK09') then ! Polvani-Kushner forcing (hfok edit Dec 2025)
+      else if (trim(equilibrium_t_option) == 'Polvani_Kushner') then ! hfok edit Dec 2025
+         ! First, compute HS troposphere exactly as current code does:
          p_norm(:,:) = p_full(:,:,k)/pref
-         sigma(:,:)  = p_norm(:,:)
          the   (:,:) = t_star(:,:) - delv*cos_lat_2(:,:)*log(p_norm(:,:))
-         teq(:,:,k)  = the(:,:)*(p_norm(:,:))**KAPPA
-         teq(:,:,k)  = max(teq(:,:,k), tstr(:,:))   ! HS floor
-         where (sigma(:,:) <= pk_sigma0)
-            teq(:,:,k) = teq(:,:,k) - pk_deltaT * sin_lat_2(:,:)**(pk_lat_pow/2.) &
-                                       * exp(- (sigma(:,:)/pk_sigma0)**pk_sigma_pow)
+         teq(:,:,k) = the(:,:)*(p_norm(:,:))**KAPPA
+         teq(:,:,k) = max( teq(:,:,k),  TUS_strat(p_trop)) 
+
+         ! PK stratosphere: summer = US Std Atmosphere, winter cooled column, blended by W
+         ! Summer profile from helper (pressure in Pa)
+         T_summer = TUS_strat(p_full(:,:,k))
+         ! Winter profile cooled relative to tropopause temperature
+         T_winter = TUS_strat(p_trop) * (p_full(:,:,k)/p_trop)**(KAPPA*CP_AIR*pk_gamma/GRAV)
+
+         where (p_full(:,:,k) < p_trop)
+            teq(:,:,k) = (1.0 - W)*T_summer + W*T_winter
          end where
       else
          call error_mesg ('hs_forcing_nml', &
@@ -1037,5 +1057,41 @@ real, intent(in),  dimension(:,:,:), optional :: mask
 !-----------------------------------------------------------------------
 
  end subroutine top_down_newtonian_damping
+
+! #######################################################################
+! Helper function for US Standard Atmosphere temperatures (hfok Dec 2025)
+! hardcoded now (want to change later?)
+! #######################################################################
+real function TUS_strat(p)
+  ! US Standard Atmosphere temperature for p <= 22632 Pa (tropopause and above)
+  real, intent(in) :: p           ! pressure (Pa)
+  real, parameter :: Rd_over_g = (KAPPA*CP_AIR)/GRAV  ! = Rd/GRAV
+
+  ! Layer base pressures (Pa), temperatures (K), lapse rates (K/m)
+  real, parameter :: p1=22632.1,  T1=216.65                  ! 11–20 km, isothermal
+  real, parameter :: p2=5474.89,  T2=216.65, L2= 0.0010      ! 20–32 km, +1.0 K/km
+  real, parameter :: p3=868.02,   T3=228.65, L3= 0.0028      ! 32–47 km, +2.8 K/km
+  real, parameter :: p4=110.91,   T4=270.65                  ! 47–51 km, isothermal
+  real, parameter :: p5=66.94,    T5=270.65, L5=-0.0028      ! 51–71 km, −2.8 K/km
+  real, parameter :: p6=3.956,    T6=214.65, L6=-0.0020      ! 71–84.85 km, −2.0 K/km
+
+  if    (p >= p1) then
+    TUS_strat = T1
+  else if (p > p2) then
+    TUS_strat = T2 * (p/p2)**(-L2/Rd_over_g)
+  else if (p > p3) then
+    TUS_strat = T3 * (p/p3)**(-L3/Rd_over_g)
+  else if (p > p4) then
+    TUS_strat = T4
+  else if (p > p5) then
+    TUS_strat = T5 * (p/p5)**(-L5/Rd_over_g)  ! L5<0 => exponent >0
+  else if (p > p6) then
+    TUS_strat = T6 * (p/p6)**(-L6/Rd_over_g)  ! L6<0 => exponent >0
+  else
+    TUS_strat = T6 * (p/p6)**(-L6/Rd_over_g)
+  end if
+end function TUS_strat
+
+
 
 end module hs_forcing_mod
