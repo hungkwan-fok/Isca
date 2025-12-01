@@ -1,6 +1,9 @@
+# Run a parameter sweep of the Held Suarez model
+# by varying the rotation rate from 1% to 1000% of Earth's rot rate
 import numpy as np
+from isca import Experiment, DryCodeBase, FailedRunError, GFDL_BASE, DiagTable, Namelist
 
-from isca import DryCodeBase, DiagTable, Experiment, Namelist, GFDL_BASE
+from isca.util import exp_progress
 
 NCORES = 32
 RESOLUTION = 'T42', 25  # T42 horizontal resolution, 25 levels in pressure
@@ -8,21 +11,6 @@ RESOLUTION = 'T42', 25  # T42 horizontal resolution, 25 levels in pressure
 # a CodeBase can be a directory on the computer,
 # useful for iterative development
 cb = DryCodeBase.from_directory(GFDL_BASE)
-
-# or it can point to a specific git repo and commit id.
-# This method should ensure future, independent, reproducibility of results.
-# cb = DryCodeBase.from_repo(repo='https://github.com/isca/isca', commit='isca1.1')
-
-# compilation depends on computer specific settings.  The $GFDL_ENV
-# environment variable is used to determine which `$GFDL_BASE/src/extra/env` file
-# is used to load the correct compilers.  The env file is always loaded from
-# $GFDL_BASE and not the checked out git repo.
-
-# create an Experiment object to handle the configuration of model parameters
-# and output diagnostics
-
-exp_name = 'polvani_kushner'
-exp = Experiment(exp_name, codebase=cb)
 
 #Tell model how to write diagnostics
 diag = DiagTable()
@@ -37,8 +25,6 @@ diag.add_field('dynamics', 'vcomp', time_avg=True)
 diag.add_field('dynamics', 'temp', time_avg=True)
 diag.add_field('dynamics', 'vor', time_avg=True)
 diag.add_field('dynamics', 'div', time_avg=True)
-
-exp.diag_table = diag
 
 # define namelist values as python dictionary
 # wrapped as a namelist object.
@@ -81,7 +67,7 @@ namelist = Namelist({
         'eps': 0.,
         'sigma_b': 0.7,
         'ka':   -40.,
-        'ks':   -40.,          # lengthen stratospheric damping vs default -4
+        'ks':   -4.,          # lengthen stratospheric damping vs default -4
         'kf':   -1.,
         'do_conserve_energy': True,
     },
@@ -101,14 +87,34 @@ namelist = Namelist({
     }
 })
 
-exp.namelist = namelist
-exp.set_resolution(*RESOLUTION)
 
-#Lets do a run!
-if __name__ == '__main__':
-    
-    cb.compile()  # compile the source code to working directory $GFDL_WORK/codebase
+if __name__ == "__main__":
+    earth_omega = 7.292e-5
 
-    exp.run(1, num_cores=NCORES, use_restart=False)
-    for i in range(2, 13):
-        exp.run(i, num_cores=NCORES)  # use the restart i-1 by default
+    # Compile the codebase once
+    cb = DryCodeBase.from_directory(GFDL_BASE)
+    cb.compile()
+
+    exp_name = 'PK_testcase'
+    omega = earth_omega 
+
+    exp = Experiment(exp_name, codebase=cb)
+    exp.set_resolution(*RESOLUTION)
+
+    exp.namelist = namelist
+    exp.diag_table = diag
+    exp.update_namelist({"constants_nml": {"omega": omega}})
+
+
+    # Month 1 (fresh start for each experiment)
+    with exp_progress(exp):
+        exp.run(1, use_restart=False, num_cores=NCORES)
+
+    # Months 2–10
+    for n in range(2, 13):
+        with exp_progress(exp, description=f"o{s:.0f} d{{day}}"):
+            exp.run(n, num_cores=NCORES) # use the restart i-1 by default
+            exp.delete_restart(n - 1)  # keep space usage sane
+
+
+

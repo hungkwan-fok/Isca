@@ -1,8 +1,8 @@
 #!/bin/bash -l
 #
-#SBATCH --job-name=held_suarez_py
+#SBATCH --job-name=polvani_kushner_py
 #SBATCH --partition=parallel          # or “short”, “long”, …
-#SBATCH --time=24:00:00           # wall-clock limit
+#SBATCH --time=06:00:00           # wall-clock limit
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=32      # Rockfish = 48 cores / node
 #SBATCH --cpus-per-task=1
